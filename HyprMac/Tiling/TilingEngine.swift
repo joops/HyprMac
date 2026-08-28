@@ -950,12 +950,11 @@ class TilingEngine {
         let key = TilingKey(workspace: workspace, screen: screen)
         let t = tree(for: key)
         let rect = displayManager.cgRect(for: screen)
-        let padded = rect.insetBy(dx: outerPadding, dy: outerPadding)
 
         guard let leaf = t.root.find(window) else { return }
 
         let axis: SplitDirection = (direction == .left || direction == .right) ? .horizontal : .vertical
-        let grow = (direction == .right || direction == .down)
+        let positive = (direction == .right || direction == .down)
 
         let step: CGFloat = 0.05
 
@@ -970,8 +969,7 @@ class TilingEngine {
                 continue
             }
 
-            let isLeft = parent.left === node
-            let delta: CGFloat = (isLeft == grow) ? step : -step
+            let delta: CGFloat = positive ? step : -step
             parent.splitRatio += delta
             parent.userSetRatio = true
             hyprLog(.debug, .orchestration, "resizeDirection \(direction): ratio → \(String(format: "%.2f", parent.splitRatio))")
