@@ -1879,6 +1879,7 @@ class WindowManager {
     /// or border state that pointed at the window.
     private func applyForgottenIDExternalCleanup(_ id: CGWindowID) {
         tilingEngine.forgetMinimumSize(windowID: id)
+        tilingEngine.forgetSavedRatio(windowID: id)
         workspaceManager.removeWindow(id)
         scratchpad.forget(id)
         if focusController.lastFocusedID == id {
