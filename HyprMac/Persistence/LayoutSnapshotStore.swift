@@ -9,6 +9,10 @@ struct WindowAssignment: Codable, Equatable {
     let bundleID: String
     let windowTitle: String
     let workspace: Int
+    let x: CGFloat?
+    let y: CGFloat?
+    let w: CGFloat?
+    let h: CGFloat?
 }
 
 /// A frozen layout for one display configuration.
@@ -16,6 +20,7 @@ struct LayoutSnapshot: Codable {
     let displayKey: String
     let timestamp: Date
     let assignments: [WindowAssignment]
+    let isManual: Bool
 }
 
 /// Persistence layer for display-keyed layout snapshots.
@@ -31,6 +36,8 @@ final class LayoutSnapshotStore {
 
     static let shared = LayoutSnapshotStore()
 
+    static let maxSnapshots = 10
+
     private let filePath: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("HyprMac", isDirectory: true)
@@ -39,9 +46,14 @@ final class LayoutSnapshotStore {
     }()
 
     /// In-memory cache of all snapshots, keyed by display fingerprint.
-    private var snapshots: [String: LayoutSnapshot] = [:]
+    private(set) var snapshots: [String: LayoutSnapshot] = [:]
 
     private init() { load() }
+
+    // test-only initializer — avoids disk I/O and the singleton
+    init(testSnapshots: [String: LayoutSnapshot]) {
+        snapshots = testSnapshots
+    }
 
     // MARK: - display fingerprint
 
@@ -58,13 +70,20 @@ final class LayoutSnapshotStore {
 
     /// Capture current window→workspace assignments for the active
     /// display configuration.
-    func save(displayKey: String, assignments: [WindowAssignment]) {
+    func save(displayKey: String, assignments: [WindowAssignment], manual: Bool = false) {
+        if !manual, let existing = snapshots[displayKey], existing.isManual {
+            hyprLog(.debug, .lifecycle,
+                    "skipping auto-save — manual snapshot exists for '\(displayKey)'")
+            return
+        }
         let snapshot = LayoutSnapshot(
             displayKey: displayKey,
             timestamp: Date(),
-            assignments: assignments
+            assignments: assignments,
+            isManual: manual
         )
         snapshots[displayKey] = snapshot
+        pruneOldest()
         persist()
         hyprLog(.notice, .lifecycle,
                 "layout snapshot saved: \(assignments.count) windows for '\(displayKey)'")
@@ -76,6 +95,17 @@ final class LayoutSnapshotStore {
     /// exists.
     func snapshot(for displayKey: String) -> LayoutSnapshot? {
         snapshots[displayKey]
+    }
+
+    // MARK: - pruning
+
+    private func pruneOldest() {
+        while snapshots.count > Self.maxSnapshots {
+            guard let oldest = snapshots.min(by: { $0.value.timestamp < $1.value.timestamp }) else { break }
+            snapshots.removeValue(forKey: oldest.key)
+            hyprLog(.debug, .lifecycle,
+                    "pruned oldest layout snapshot: '\(oldest.key)'")
+        }
     }
 
     // MARK: - persistence
