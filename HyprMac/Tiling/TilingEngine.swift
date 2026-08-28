@@ -940,6 +940,47 @@ class TilingEngine {
         retile(key: key, screen: screen)
     }
 
+    /// Resize the focused window by adjusting the nearest matching-axis
+    /// split ratio. Walks from the leaf upward to find the first ancestor
+    /// whose split direction matches the resize axis, then nudges its
+    /// `splitRatio` by `step`. Flags the ancestor `userSetRatio = true`
+    /// so the adjustment survives retiles.
+    func resizeInDirection(_ window: HyprWindow, direction: Direction,
+                           onWorkspace workspace: Int, screen: NSScreen) {
+        let key = TilingKey(workspace: workspace, screen: screen)
+        let t = tree(for: key)
+        let rect = displayManager.cgRect(for: screen)
+        let padded = rect.insetBy(dx: outerPadding, dy: outerPadding)
+
+        guard let leaf = t.root.find(window) else { return }
+
+        let axis: SplitDirection = (direction == .left || direction == .right) ? .horizontal : .vertical
+        let grow = (direction == .right || direction == .down)
+
+        let step: CGFloat = 0.05
+
+        var node = leaf
+        while let parent = node.parent {
+            guard let parentRect = t.rectForNode(parent, in: rect, gap: gapSize, padding: outerPadding) else {
+                node = parent
+                continue
+            }
+            guard parent.direction(for: parentRect) == axis else {
+                node = parent
+                continue
+            }
+
+            let isLeft = parent.left === node
+            let delta: CGFloat = (isLeft == grow) ? step : -step
+            parent.splitRatio += delta
+            parent.userSetRatio = true
+            hyprLog(.debug, .orchestration, "resizeDirection \(direction): ratio → \(String(format: "%.2f", parent.splitRatio))")
+            break
+        }
+
+        retile(key: key, screen: screen)
+    }
+
     /// Toggle the split direction of `window`'s parent and return post-toggle
     /// layout rects without applying frames.
     ///
