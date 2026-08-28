@@ -348,6 +348,8 @@ class WindowManager {
         actionDispatcher.isMenuTracking = { [weak self] in self?.mouseTracker.menuTracking ?? false }
         actionDispatcher.toggleScratchpad = { [weak self] in self?.scratchpad.toggle() }
         actionDispatcher.moveToScratchpad = { [weak self] in self?.scratchpad.sendFocusedWindow() }
+        actionDispatcher.saveLayout = { [weak self] in self?.saveLayoutSnapshot() }
+        actionDispatcher.restoreLayout = { [weak self] in self?.restoreLayoutSnapshot() }
         // DragSwapHandler shares the dispatcher's swap-rejection flash so cross-monitor and
         // direction swaps both surface the same red-border + beep feedback.
         dragSwapHandler.rejectSwap = { [weak self] window, reason in self?.actionDispatcher.rejectSwap(window, reason: reason) }
@@ -1427,6 +1429,9 @@ class WindowManager {
     /// workspace assignment and un-floated manual floats on every
     /// monitor connect/disconnect.
     private func reconcileAfterDisplayChange() {
+        // auto-save the layout for the OLD display config before migrating
+        saveLayoutSnapshot()
+
         workspaceManager.initializeMonitors()
         tilingEngine.handleDisplayChange(
             currentScreens: displayManager.screens,
@@ -1437,7 +1442,93 @@ class WindowManager {
         let allWindows = accessibility.getAllWindows()
         classifyAndAssign(allWindows)
         reparkHiddenWorkspaceWindows(allWindows)
+
+        // auto-restore if the NEW display config has a saved layout
+        restoreLayoutSnapshot(windows: allWindows)
+
         tileAllVisibleSpaces(windows: allWindows)
+    }
+
+    // MARK: - Layout snapshot save / restore
+
+    /// Save the current window→workspace layout for the active display
+    /// configuration. Called automatically before display reconcile and
+    /// manually via `Hypr+Ctrl+S`.
+    private func saveLayoutSnapshot() {
+        let displayKey = LayoutSnapshotStore.displayKey(screens: displayManager.screens)
+        let allWorkspaces = workspaceManager.allWindowWorkspaces()
+        var assignments: [WindowAssignment] = []
+        for (windowID, workspace) in allWorkspaces {
+            guard let window = stateCache.cachedWindows[windowID] else { continue }
+            let bundleID = NSRunningApplication(processIdentifier: window.ownerPID)?.bundleIdentifier ?? ""
+            let title = window.title ?? ""
+            assignments.append(WindowAssignment(
+                bundleID: bundleID, windowTitle: title, workspace: workspace
+            ))
+        }
+        LayoutSnapshotStore.shared.save(displayKey: displayKey, assignments: assignments)
+    }
+
+    /// Restore saved window→workspace assignments for the current
+    /// display configuration. Moves windows to their saved workspaces
+    /// using the same matching logic as the manual keybind.
+    ///
+    /// - Parameter windows: Pre-fetched window list. When `nil`, reads
+    ///   from the accessibility layer.
+    private func restoreLayoutSnapshot(windows: [HyprWindow]? = nil) {
+        let displayKey = LayoutSnapshotStore.displayKey(screens: displayManager.screens)
+        guard let snapshot = LayoutSnapshotStore.shared.snapshot(for: displayKey) else {
+            hyprLog(.debug, .lifecycle, "no saved layout for '\(displayKey)'")
+            return
+        }
+
+        let allWindows = windows ?? accessibility.getAllWindows()
+        var claimed: [Int: Bool] = [:]
+        var moved = 0
+
+        for (idx, saved) in snapshot.assignments.enumerated() {
+            claimed[idx] = false
+        }
+
+        for window in allWindows {
+            let bundleID = NSRunningApplication(processIdentifier: window.ownerPID)?.bundleIdentifier ?? ""
+            let title = window.title ?? ""
+            let currentWs = workspaceManager.workspaceFor(window.windowID)
+
+            // find best match: exact bundleID required, title used as tiebreaker
+            var bestIdx: Int?
+            var bestScore = -1
+            for (idx, saved) in snapshot.assignments.enumerated() {
+                guard claimed[idx] == false, saved.bundleID == bundleID else { continue }
+                var score = 1
+                if saved.windowTitle == title && !title.isEmpty { score += 10 }
+                if saved.workspace == currentWs { score += 5 }
+                if score > bestScore {
+                    bestScore = score
+                    bestIdx = idx
+                }
+            }
+
+            guard let matchIdx = bestIdx else { continue }
+            claimed[matchIdx] = true
+
+            let targetWs = snapshot.assignments[matchIdx].workspace
+            if currentWs != targetWs {
+                workspaceManager.moveWindow(window.windowID, toWorkspace: targetWs)
+                // show or hide depending on whether target workspace is visible
+                if workspaceManager.isWorkspaceVisible(targetWs) {
+                    // will be tiled by the caller
+                } else {
+                    if let screen = workspaceManager.homeScreenForWorkspace(targetWs) ?? displayManager.screens.first {
+                        workspaceManager.hideInCorner(window, on: screen)
+                    }
+                }
+                moved += 1
+            }
+        }
+
+        hyprLog(.notice, .lifecycle,
+                "layout restored: \(moved) windows moved for '\(displayKey)'")
     }
 
     /// Re-park every window assigned to a hidden workspace at the current
