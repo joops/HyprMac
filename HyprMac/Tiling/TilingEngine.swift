@@ -956,9 +956,8 @@ class TilingEngine {
         let axis: SplitDirection = (direction == .left || direction == .right) ? .horizontal : .vertical
         let positive = (direction == .right || direction == .down)
 
-        let step: CGFloat = 0.05
-
         var node = leaf
+        var didResize = false
         while let parent = node.parent {
             guard let parentRect = t.rectForNode(parent, in: rect, gap: gapSize, padding: outerPadding) else {
                 node = parent
@@ -969,14 +968,21 @@ class TilingEngine {
                 continue
             }
 
-            let delta: CGFloat = positive ? step : -step
-            parent.splitRatio += delta
+            let isLeft = parent.left === node
+            let grow = isLeft == positive
+            let delta: CGFloat = grow ? TilingConfig.resizeStep : -TilingConfig.resizeStep
+            let newRatio = min(max(parent.splitRatio + delta, TilingConfig.minRatio), TilingConfig.maxRatio)
+            guard newRatio != parent.splitRatio else { break }
+            parent.splitRatio = newRatio
             parent.userSetRatio = true
-            hyprLog(.debug, .orchestration, "resizeDirection \(direction): ratio → \(String(format: "%.2f", parent.splitRatio))")
+            didResize = true
+            hyprLog(.debug, .tiling, "resizeDirection \(direction): ratio → \(String(format: "%.2f", newRatio))")
             break
         }
 
-        retile(key: key, screen: screen)
+        if didResize {
+            retile(key: key, screen: screen)
+        }
     }
 
     /// Toggle the split direction of `window`'s parent and return post-toggle

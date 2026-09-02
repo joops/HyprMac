@@ -60,6 +60,36 @@ final class ResizeDirectionTests: XCTestCase {
                        "resize step should be 0.05")
     }
 
+    // MARK: - right child resize
+
+    func testRightChildResizeRightGrowsRightChild() {
+        let a = makeWindow(id: 1)
+        let b = makeWindow(id: 2)
+        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
+
+        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
+        let ratioBefore = tree.root.splitRatio
+
+        engine.resizeInDirection(b, direction: .right, onWorkspace: 1, screen: screen)
+
+        XCTAssertLessThan(tree.root.splitRatio, ratioBefore,
+                          "right child pressing right should decrease ratio (grow right child)")
+    }
+
+    func testRightChildResizeLeftShrinksRightChild() {
+        let a = makeWindow(id: 1)
+        let b = makeWindow(id: 2)
+        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
+
+        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
+        let ratioBefore = tree.root.splitRatio
+
+        engine.resizeInDirection(b, direction: .left, onWorkspace: 1, screen: screen)
+
+        XCTAssertGreaterThan(tree.root.splitRatio, ratioBefore,
+                             "right child pressing left should increase ratio (shrink right child)")
+    }
+
     // MARK: - axis matching
 
     func testResizeWalksUpToMatchingAxis() {
