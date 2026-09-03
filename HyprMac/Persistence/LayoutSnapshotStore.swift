@@ -101,7 +101,11 @@ final class LayoutSnapshotStore {
 
     private func pruneOldest() {
         while snapshots.count > Self.maxSnapshots {
-            guard let oldest = snapshots.min(by: { $0.value.timestamp < $1.value.timestamp }) else { break }
+            guard let oldest = snapshots
+                .filter({ !$0.value.isManual })
+                .min(by: { $0.value.timestamp < $1.value.timestamp })
+                ?? snapshots.min(by: { $0.value.timestamp < $1.value.timestamp })
+            else { break }
             snapshots.removeValue(forKey: oldest.key)
             hyprLog(.debug, .lifecycle,
                     "pruned oldest layout snapshot: '\(oldest.key)'")
@@ -111,9 +115,10 @@ final class LayoutSnapshotStore {
     // MARK: - persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: filePath),
-              let decoded = try? JSONDecoder().decode([String: LayoutSnapshot].self, from: data)
-        else { return }
+        guard let data = try? Data(contentsOf: filePath) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let decoded = try? decoder.decode([String: LayoutSnapshot].self, from: data) else { return }
         snapshots = decoded
         hyprLog(.debug, .lifecycle,
                 "layout snapshots loaded: \(snapshots.count) configs")
