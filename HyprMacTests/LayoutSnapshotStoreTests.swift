@@ -151,6 +151,59 @@ final class LayoutSnapshotStoreTests: XCTestCase {
         XCTAssertEqual(decoded.assignments, snap.assignments)
     }
 
+    // MARK: - disk round-trip (persist/load pairing)
+
+    func testPersistLoadRoundTripViaRealEncoderDecoder() throws {
+        let snap = LayoutSnapshot(
+            displayKey: "Test:1920x1080",
+            timestamp: Date(),
+            assignments: [
+                WindowAssignment(bundleID: "com.a", windowTitle: "A",
+                                 workspace: 1, x: 0, y: 0, w: 960, h: 1080)
+            ],
+            isManual: true
+        )
+        let dict: [String: LayoutSnapshot] = ["Test:1920x1080": snap]
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(dict)
+
+        let tmpFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("layout-test-\(UUID().uuidString).json")
+        try data.write(to: tmpFile)
+        defer { try? FileManager.default.removeItem(at: tmpFile) }
+
+        let loaded = try Data(contentsOf: tmpFile)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([String: LayoutSnapshot].self, from: loaded)
+
+        XCTAssertEqual(decoded.count, 1)
+        let restored = try XCTUnwrap(decoded["Test:1920x1080"])
+        XCTAssertEqual(restored.displayKey, snap.displayKey)
+        XCTAssertEqual(restored.isManual, snap.isManual)
+        XCTAssertEqual(restored.assignments, snap.assignments)
+    }
+
+    // MARK: - pruning protects manual snapshots
+
+    func testPruningEvictsAutoBeforeManual() {
+        let store = LayoutSnapshotStore(testSnapshots: [:])
+        let a = [WindowAssignment(bundleID: "com.x", windowTitle: "X",
+                                  workspace: 1, x: 0, y: 0, w: 100, h: 100)]
+
+        store.save(displayKey: "Manual:100x100", assignments: a, manual: true)
+        for i in 0..<LayoutSnapshotStore.maxSnapshots {
+            store.save(displayKey: "Auto\(i):100x100", assignments: a, manual: false)
+        }
+
+        XCTAssertEqual(store.snapshots.count, LayoutSnapshotStore.maxSnapshots)
+        XCTAssertNotNil(store.snapshot(for: "Manual:100x100"),
+                        "manual snapshot should survive pruning when auto snapshots exist")
+    }
+
     // MARK: - keybind defaults
 
     func testDefaultsContainSaveAndRestore() {

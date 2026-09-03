@@ -90,6 +90,9 @@ class UserConfig: ObservableObject {
     }
 
     // iCloud sync state — stored in UserDefaults, not config.json
+    @Published var restoreLayoutOnLaunch: Bool {
+        didSet { guard !isReloading else { return }; save() }
+    }
     @Published var iCloudSyncEnabled: Bool {
         didSet {
             UserDefaults.standard.set(iCloudSyncEnabled, forKey: "iCloudSyncEnabled")
@@ -143,6 +146,7 @@ class UserConfig: ObservableObject {
             self.chromeFadeDurationSec = saved.chromeFadeDurationSec ?? UserConfigDefaults.chromeFadeDurationSec
             self.scratchpadTileByDefault = saved.scratchpadTileByDefault ?? UserConfigDefaults.scratchpadTileByDefault
             self.scratchpadRegionInset = saved.scratchpadRegionInset ?? UserConfigDefaults.scratchpadRegionInset
+            self.restoreLayoutOnLaunch = saved.restoreLayoutOnLaunch ?? UserConfigDefaults.restoreLayoutOnLaunch
         } else {
             self.keybinds = Keybind.defaults
             self.gapSize = UserConfigDefaults.gapSize
@@ -161,6 +165,7 @@ class UserConfig: ObservableObject {
             self.chromeFadeDurationSec = UserConfigDefaults.chromeFadeDurationSec
             self.scratchpadTileByDefault = UserConfigDefaults.scratchpadTileByDefault
             self.scratchpadRegionInset = UserConfigDefaults.scratchpadRegionInset
+            self.restoreLayoutOnLaunch = UserConfigDefaults.restoreLayoutOnLaunch
         }
 
         // monitor settings: prefer the local file; fall back to (and migrate
@@ -237,7 +242,8 @@ class UserConfig: ObservableObject {
             mouseHoverPollHz: mouseHoverPollHz,
             chromeFadeDurationSec: chromeFadeDurationSec,
             scratchpadTileByDefault: scratchpadTileByDefault,
-            scratchpadRegionInset: scratchpadRegionInset)
+            scratchpadRegionInset: scratchpadRegionInset,
+            restoreLayoutOnLaunch: restoreLayoutOnLaunch)
     }
 
     func resetToDefaults() {
@@ -260,6 +266,7 @@ class UserConfig: ObservableObject {
         chromeFadeDurationSec = UserConfigDefaults.chromeFadeDurationSec
         scratchpadTileByDefault = UserConfigDefaults.scratchpadTileByDefault
         scratchpadRegionInset = UserConfigDefaults.scratchpadRegionInset
+        restoreLayoutOnLaunch = UserConfigDefaults.restoreLayoutOnLaunch
     }
 
     // resolve the border color — custom hex or brand cyan
@@ -294,6 +301,7 @@ class UserConfig: ObservableObject {
         chromeFadeDurationSec = saved.chromeFadeDurationSec ?? UserConfigDefaults.chromeFadeDurationSec
         scratchpadTileByDefault = saved.scratchpadTileByDefault ?? UserConfigDefaults.scratchpadTileByDefault
         scratchpadRegionInset = saved.scratchpadRegionInset ?? UserConfigDefaults.scratchpadRegionInset
+        restoreLayoutOnLaunch = saved.restoreLayoutOnLaunch ?? UserConfigDefaults.restoreLayoutOnLaunch
 
         // monitor settings come from the local file, not the synced config
         if let mc = store.loadSavedMonitorConfig() {
@@ -331,7 +339,8 @@ extension SavedConfig {
             mouseHoverPollHz: UserConfigDefaults.mouseHoverPollHz,
             chromeFadeDurationSec: UserConfigDefaults.chromeFadeDurationSec,
             scratchpadTileByDefault: UserConfigDefaults.scratchpadTileByDefault,
-            scratchpadRegionInset: UserConfigDefaults.scratchpadRegionInset)
+            scratchpadRegionInset: UserConfigDefaults.scratchpadRegionInset,
+            restoreLayoutOnLaunch: UserConfigDefaults.restoreLayoutOnLaunch)
     }
 }
 
