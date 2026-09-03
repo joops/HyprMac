@@ -1,129 +1,152 @@
 import XCTest
-import Cocoa
 @testable import HyprMac
 
 final class RatioMemoryTests: XCTestCase {
 
-    private var displayManager: DisplayManager!
-    private var engine: TilingEngine!
-    private var screen: NSScreen!
-
-    override func setUpWithError() throws {
-        displayManager = DisplayManager()
-        engine = TilingEngine(displayManager: displayManager)
-        guard let main = NSScreen.main ?? NSScreen.screens.first else {
-            throw XCTSkip("no NSScreen available — test requires a display")
-        }
-        screen = main
+    private func insertAndApply(_ window: HyprWindow, into tree: BSPTree) {
+        tree.insert(window)
+        tree.root.applySavedRatios()
     }
 
-    // MARK: - save and restore round-trip
+    // MARK: - right child removed
 
-    func testRatioRestoredAfterRemoveAndReinsert() {
+    func testRemoveRightChildPreservesRatioOnReinsert() {
+        let tree = BSPTree()
         let a = makeWindow(id: 1)
         let b = makeWindow(id: 2)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
+        tree.insert(a)
+        tree.insert(b)
 
-        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
         tree.root.splitRatio = 0.7
         tree.root.userSetRatio = true
 
-        // remove window b — its ratio should be remembered
-        engine.removeWindowID(b.windowID)
-        XCTAssertEqual(tree.allWindows.count, 1)
+        tree.remove(b)
+        XCTAssertEqual(tree.root.window, a)
 
-        // re-add b — ratio should restore
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-        let tree2 = engine.existingTree(forWorkspace: 1, screen: screen)!
-        XCTAssertEqual(tree2.root.splitRatio, 0.7, accuracy: 0.001,
-                       "saved ratio should be restored after re-insert")
-        XCTAssertTrue(tree2.root.userSetRatio)
+        insertAndApply(makeWindow(id: 3), into: tree)
+
+        XCTAssertEqual(tree.root.splitRatio, 0.7, accuracy: 0.001,
+                       "ratio should survive right-child removal + reinsert")
+        XCTAssertTrue(tree.root.userSetRatio)
+    }
+
+    // MARK: - left child removed (exercises 1.0-ratio flip)
+
+    func testRemoveLeftChildPreservesRatioOnReinsert() {
+        let tree = BSPTree()
+        let a = makeWindow(id: 1)
+        let b = makeWindow(id: 2)
+        tree.insert(a)
+        tree.insert(b)
+
+        tree.root.splitRatio = 0.7
+        tree.root.userSetRatio = true
+
+        tree.remove(a)
+        XCTAssertEqual(tree.root.window, b)
+
+        insertAndApply(makeWindow(id: 3), into: tree)
+
+        XCTAssertEqual(tree.root.splitRatio, 0.7, accuracy: 0.001,
+                       "left-child removal: new window takes the left slot, ratio preserved")
+        XCTAssertTrue(tree.root.userSetRatio)
     }
 
     // MARK: - default ratio is not saved
 
     func testDefaultRatioNotSaved() {
+        let tree = BSPTree()
         let a = makeWindow(id: 1)
         let b = makeWindow(id: 2)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
+        tree.insert(a)
+        tree.insert(b)
 
-        // leave ratio at default 0.5, userSetRatio = false
-        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
-        XCTAssertEqual(tree.root.splitRatio, 0.5, accuracy: 0.001)
+        tree.remove(b)
+        insertAndApply(makeWindow(id: 3), into: tree)
+
+        XCTAssertEqual(tree.root.splitRatio, TilingConfig.defaultRatio, accuracy: 0.001,
+                       "default 50/50 ratio should not be saved")
         XCTAssertFalse(tree.root.userSetRatio)
-
-        engine.removeWindowID(b.windowID)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-
-        let tree2 = engine.existingTree(forWorkspace: 1, screen: screen)!
-        // ratio should stay at default — nothing was saved
-        XCTAssertEqual(tree2.root.splitRatio, 0.5, accuracy: 0.001)
     }
 
-    // MARK: - forgetSavedRatio
+    // MARK: - memory consumed after apply
 
-    func testForgetSavedRatioPreventsRestore() {
+    func testSavedRatioClearedAfterApply() {
+        let tree = BSPTree()
         let a = makeWindow(id: 1)
         let b = makeWindow(id: 2)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-
-        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
+        tree.insert(a)
+        tree.insert(b)
         tree.root.splitRatio = 0.7
         tree.root.userSetRatio = true
 
-        engine.removeWindowID(b.windowID)
-        engine.forgetSavedRatio(windowID: b.windowID)
+        tree.remove(b)
+        insertAndApply(makeWindow(id: 3), into: tree)
 
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-        let tree2 = engine.existingTree(forWorkspace: 1, screen: screen)!
-        XCTAssertEqual(tree2.root.splitRatio, 0.5, accuracy: 0.001,
-                       "forgotten ratio should not restore — should reset to default")
+        XCTAssertNil(tree.root.savedSplitRatio,
+                     "saved ratio should be consumed on apply, not linger")
     }
 
-    // MARK: - ratio re-saved on each removal
+    // MARK: - single window removal (root)
 
-    func testRatioReSavedOnSubsequentRemoval() {
+    func testRemoveOnlyWindowDoesNotCrash() {
+        let tree = BSPTree()
+        let a = makeWindow(id: 1)
+        tree.insert(a)
+        tree.root.splitRatio = 0.7
+        tree.root.userSetRatio = true
+
+        tree.remove(a)
+        XCTAssertTrue(tree.root.isEmpty)
+
+        insertAndApply(makeWindow(id: 2), into: tree)
+        XCTAssertEqual(tree.root.splitRatio, TilingConfig.defaultRatio, accuracy: 0.001)
+    }
+
+    // MARK: - deeper tree
+
+    func testRatioMemoryWorksAtDepth() {
+        let tree = BSPTree()
         let a = makeWindow(id: 1)
         let b = makeWindow(id: 2)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
+        let c = makeWindow(id: 3)
+        tree.insert(a)
+        tree.insert(b)
+        tree.insert(c)
 
-        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
+        let sub = tree.root.right!
+        sub.splitRatio = 0.6
+        sub.userSetRatio = true
+
+        tree.remove(c)
+        XCTAssertEqual(tree.root.right?.window, b)
+
+        let d = makeWindow(id: 4)
+        tree.root.right?.insert(d)
+        tree.root.applySavedRatios()
+
+        XCTAssertEqual(tree.root.right?.splitRatio ?? 0, 0.6, accuracy: 0.001,
+                       "ratio at depth should survive removal + reinsert")
+    }
+
+    // MARK: - ratio survives multiple cycles
+
+    func testRatioSurvivesMultipleCycles() {
+        let tree = BSPTree()
+        let a = makeWindow(id: 1)
+        let b = makeWindow(id: 2)
+        tree.insert(a)
+        tree.insert(b)
         tree.root.splitRatio = 0.65
         tree.root.userSetRatio = true
 
-        engine.removeWindowID(b.windowID)
+        tree.remove(b)
+        insertAndApply(makeWindow(id: 3), into: tree)
+        XCTAssertEqual(tree.root.splitRatio, 0.65, accuracy: 0.001)
 
-        // first re-insert restores 0.65
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-        let tree2 = engine.existingTree(forWorkspace: 1, screen: screen)!
-        XCTAssertEqual(tree2.root.splitRatio, 0.65, accuracy: 0.001)
-
-        // remove again — the restored ratio (0.65, userSetRatio=true) is
-        // re-saved, so the next insert also gets 0.65
-        engine.removeWindowID(b.windowID)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-        let tree3 = engine.existingTree(forWorkspace: 1, screen: screen)!
-        XCTAssertEqual(tree3.root.splitRatio, 0.65, accuracy: 0.001,
-                       "ratio should be re-saved on each removal — survives multiple cycles")
-    }
-
-    // MARK: - userSetRatio at default is still saved
-
-    func testUserSetRatioAtDefaultIsSaved() {
-        let a = makeWindow(id: 1)
-        let b = makeWindow(id: 2)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-
-        let tree = engine.existingTree(forWorkspace: 1, screen: screen)!
-        // user manually set to 0.5 (same as default but flagged)
-        tree.root.splitRatio = 0.5
-        tree.root.userSetRatio = true
-
-        engine.removeWindowID(b.windowID)
-        _ = engine.prepareTileLayout([a, b], onWorkspace: 1, screen: screen)
-
-        let tree2 = engine.existingTree(forWorkspace: 1, screen: screen)!
-        XCTAssertTrue(tree2.root.userSetRatio,
-                      "userSetRatio flag should survive save/restore even at default ratio")
+        tree.remove(tree.root.right!.window!)
+        insertAndApply(makeWindow(id: 4), into: tree)
+        XCTAssertEqual(tree.root.splitRatio, 0.65, accuracy: 0.001,
+                       "ratio should survive multiple remove/reinsert cycles")
     }
 }
