@@ -49,6 +49,9 @@ class BSPNode {
     var left: BSPNode?
     var right: BSPNode?
 
+    var savedSplitRatio: CGFloat?
+    var savedChildWasLeft: Bool?
+
     /// `true` for terminal nodes — see file-level invariants.
     var isLeaf: Bool { window != nil || (left == nil && right == nil) }
 
@@ -76,16 +79,30 @@ class BSPNode {
         guard isLeaf else { return }
 
         let existing = self.window
+        let savedRatio = self.savedSplitRatio
+        let savedWasLeft = self.savedChildWasLeft
+
         self.window = nil
         self.splitRatio = TilingConfig.defaultRatio
         self.userSetRatio = false
         self.splitOverride = nil
+        self.savedSplitRatio = nil
+        self.savedChildWasLeft = nil
 
-        self.left = BSPNode(window: existing)
+        if let wasLeft = savedWasLeft, wasLeft {
+            self.left = BSPNode(window: newWindow)
+            self.right = BSPNode(window: existing)
+        } else {
+            self.left = BSPNode(window: existing)
+            self.right = BSPNode(window: newWindow)
+        }
         self.left?.parent = self
-
-        self.right = BSPNode(window: newWindow)
         self.right?.parent = self
+
+        if let ratio = savedRatio, let wasLeft = savedWasLeft {
+            self.savedSplitRatio = ratio
+            self.savedChildWasLeft = wasLeft
+        }
     }
 
     /// Remove this leaf and promote its sibling into the parent slot.
@@ -96,7 +113,13 @@ class BSPNode {
     func remove() {
         guard let parent = parent else { return }
 
-        let sibling = (parent.left === self) ? parent.right : parent.left
+        let wasLeft = parent.left === self
+        let sibling = wasLeft ? parent.right : parent.left
+
+        if parent.userSetRatio || parent.splitRatio != TilingConfig.defaultRatio {
+            sibling?.savedSplitRatio = parent.splitRatio
+            sibling?.savedChildWasLeft = wasLeft
+        }
 
         parent.window = sibling?.window
         parent.left = sibling?.left
@@ -104,6 +127,8 @@ class BSPNode {
         parent.splitRatio = sibling?.splitRatio ?? TilingConfig.defaultRatio
         parent.userSetRatio = sibling?.userSetRatio ?? false
         parent.splitOverride = sibling?.splitOverride
+        parent.savedSplitRatio = sibling?.savedSplitRatio
+        parent.savedChildWasLeft = sibling?.savedChildWasLeft
 
         parent.left?.parent = parent
         parent.right?.parent = parent
@@ -114,6 +139,20 @@ class BSPNode {
     func find(_ target: HyprWindow) -> BSPNode? {
         if window == target { return self }
         return left?.find(target) ?? right?.find(target)
+    }
+
+    /// Apply any pending saved ratios stored during insert, then
+    /// recurse into children. Called after clearUserSetRatios +
+    /// resetSplitRatios so restored ratios survive the reset.
+    func applySavedRatios() {
+        if !isLeaf, let ratio = savedSplitRatio, let _ = savedChildWasLeft {
+            self.splitRatio = ratio
+            self.userSetRatio = true
+            self.savedSplitRatio = nil
+            self.savedChildWasLeft = nil
+        }
+        left?.applySavedRatios()
+        right?.applySavedRatios()
     }
 
     /// Reset every internal node's `splitRatio` to the default, except
